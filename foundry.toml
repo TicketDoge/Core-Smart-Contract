@@ -1,0 +1,17 @@
+[profile.default]
+
+src = "src"
+out = "out"
+remappings = ['@openzeppelin=lib/openzeppelin-contracts/']
+optimizer = true
+
+[fuzz]
+runs = 10000
+
+[invariant]
+fail_on_revert = false
+runs = 32
+depth = 128
+
+solc = "0.8.20"
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
