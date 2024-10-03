@@ -2,13 +2,13 @@
 pragma solidity 0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {TeslaNFT} from "../../../src/TeslaNft.sol";
+import {TicketDoge} from "../../../src/TicketDoge.sol";
 import {DogeCoin} from "../../../src/Token.sol";
 import {console} from "forge-std/console.sol";
 
 contract Handler is Test {
     DogeCoin public dogeCoin; // Make dogeCoin public so it can be accessed from Invariant
-    TeslaNFT public tesla;
+    TicketDoge public ticket;
     address public team;
     address public futureProject;
     address public charity;
@@ -37,7 +37,7 @@ contract Handler is Test {
         uint256 _feeOwnerReferral,
         uint256 _feeSpenderReferral,
         uint256 _totalDogeWinner,
-        TeslaNFT _tesla,
+        TicketDoge _ticket,
         DogeCoin _dogeCoin
     ) {
         team = _team;
@@ -50,7 +50,7 @@ contract Handler is Test {
         feeOwnerReferral = _feeOwnerReferral;
         feeSpenderReferral = _feeSpenderReferral;
         totalDogeWinner = _totalDogeWinner;
-        tesla = _tesla;
+        ticket = _ticket;
         dogeCoin = _dogeCoin;
     }
 
@@ -67,10 +67,10 @@ contract Handler is Test {
         vm.assume(
             user != address(0) &&
                 user != address(this) &&
-                user != address(tesla) &&
+                user != address(ticket) &&
                 user != address(dogeCoin)
         );
-        if (tesla.getReferralOwner(upReferral) != address(0)) {
+        if (ticket.getReferralOwner(upReferral) != address(0)) {
             return;
         }
 
@@ -87,17 +87,17 @@ contract Handler is Test {
         uint256 balanceBeforeFutureProject = dogeCoin.balanceOf(futureProject);
         uint256 balanceBeforeCharity = dogeCoin.balanceOf(charity);
 
-        uint256 betIdBefore = tesla.getBetId();
+        uint256 drawIdBefore = ticket.getDrawId();
 
-        uint256 nftToCarPercentage = tesla.getNftToCarPercentage();
-        uint256 betFeePercentage = tesla.getBetFeePercentage();
+        uint256 nftToCarPercentage = ticket.getNftToCarPercentage();
+        uint256 drawFeePercentage = ticket.getDrawFeePercentage();
 
         uint256 transferAmount = (((totalPrice * nftToCarPercentage) *
-            (10000 + betFeePercentage)) / 1e8);
+            (10000 + drawFeePercentage)) / 1e8);
         dogeCoin.transfer(user, transferAmount);
         vm.startPrank(user);
-        dogeCoin.approve(address(tesla), transferAmount);
-        tesla.createToken(
+        dogeCoin.approve(address(ticket), transferAmount);
+        ticket.createToken(
             tokenURI,
             totalPrice,
             referralCode,
@@ -117,8 +117,8 @@ contract Handler is Test {
             (transferAmount * 8) /
             100;
 
-        uint256 betIdAfter = tesla.getBetId();
-        if (betIdBefore != betIdAfter) {
+        uint256 drawIdAfter = ticket.getDrawId();
+        if (drawIdBefore != drawIdAfter) {
             isFinedWinnerTransaction = true;
         } else {
             isFinedWinnerTransaction = false;

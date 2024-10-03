@@ -26,7 +26,7 @@ import {console} from "forge-std/console.sol";
 struct ListedToken {
     string tokenURI;
     uint256 tokenId;
-    uint256 betId;
+    uint256 drawId;
     address payable owner;
     uint256 price;
     string refral;
@@ -40,7 +40,7 @@ struct ListedToken {
 }
 
 struct Player {
-    uint256 bet_Id;
+    uint256 draw_Id;
     uint256 nft_Id;
     uint256 amount;
     uint256 time;
@@ -48,7 +48,7 @@ struct Player {
     uint256 totalPriceUSD;
 }
 
-contract TeslaNFT is ERC721URIStorage {
+contract TicketDoge is ERC721URIStorage {
     /*//////////////////////////////////////////////////////////////
                                  ERRORS
     //////////////////////////////////////////////////////////////*/
@@ -83,10 +83,10 @@ contract TeslaNFT is ERC721URIStorage {
     //Initial Variables
     address public immutable dogeCoinToken;
     uint256 public nftToCarPecentage = 10;
-    uint256 public betFeePercentage = 0;
+    uint256 public drawFeePercentage = 0;
     uint256 public totalDogeWinner;
     address payable owner;
-    uint256 public betId = 1;
+    uint256 public drawId = 1;
     address public team;
     address public futureProject;
     address public charity;
@@ -133,7 +133,7 @@ contract TeslaNFT is ERC721URIStorage {
         string _referralCode,
         uint256 _totalPriceUSD
     );
-    event CreateBet(
+    event CreateDraw(
         uint256 indexed _lotteryId,
         uint256 _totalPlayers,
         uint256 _nftIdWinner_Players,
@@ -142,7 +142,7 @@ contract TeslaNFT is ERC721URIStorage {
         uint256 _time
     );
 
-    event CreateNewBet(
+    event CreateNewDraw(
         uint256 indexed _lotteryId,
         uint256 _totalPlayers,
         uint256 _nftIdWinner_Players,
@@ -167,7 +167,7 @@ contract TeslaNFT is ERC721URIStorage {
         uint256 _feeOwnerRefral,
         uint256 _feeSpenderReferral,
         uint256 _totalDogeWinner
-    ) ERC721("Tesla-DogeChance", "TDC") {
+    ) ERC721("Ticket Doge NFT", "TDN") {
         owner = payable(msg.sender);
         team = _team;
         futureProject = _futureProject;
@@ -242,7 +242,7 @@ contract TeslaNFT is ERC721URIStorage {
         users.push(msg.sender);
 
         uint256 mintPrice = (totalCarPrice * nftToCarPecentage) / 10000;
-        mintPrice = ((mintPrice * (10000 + betFeePercentage)) / 10000);
+        mintPrice = ((mintPrice * (10000 + drawFeePercentage)) / 10000);
 
         if (referralToOwner[_upReferral] != address(0)) {
             if (referralToOwner[_upReferral] == msg.sender) {
@@ -276,7 +276,7 @@ contract TeslaNFT is ERC721URIStorage {
 
             totalPlayers.push(
                 Player({
-                    bet_Id: betId,
+                    draw_Id: drawId,
                     nft_Id: currentTokenId,
                     amount: mintPrice,
                     time: block.timestamp,
@@ -286,7 +286,7 @@ contract TeslaNFT is ERC721URIStorage {
             );
             newplayers.push(
                 Player({
-                    bet_Id: betId,
+                    draw_Id: drawId,
                     nft_Id: currentTokenId,
                     amount: mintPrice,
                     time: block.timestamp,
@@ -298,7 +298,7 @@ contract TeslaNFT is ERC721URIStorage {
                 currentTokenId,
                 msg.sender,
                 tokenURI,
-                betId,
+                drawId,
                 block.timestamp,
                 _referralCode,
                 _totalPriceUSD
@@ -318,7 +318,7 @@ contract TeslaNFT is ERC721URIStorage {
             idToListedToken[currentTokenId] = ListedToken(
                 tokenURI,
                 currentTokenId,
-                betId,
+                drawId,
                 payable(msg.sender),
                 mintPrice,
                 _referralCode,
@@ -351,7 +351,7 @@ contract TeslaNFT is ERC721URIStorage {
             idToListedToken[currentTokenId] = ListedToken(
                 tokenURI,
                 currentTokenId,
-                betId,
+                drawId,
                 payable(msg.sender),
                 mintPrice,
                 _referralCode,
@@ -366,7 +366,7 @@ contract TeslaNFT is ERC721URIStorage {
 
             totalPlayers.push(
                 Player({
-                    bet_Id: betId,
+                    draw_Id: drawId,
                     nft_Id: currentTokenId,
                     amount: mintPrice,
                     time: block.timestamp,
@@ -376,7 +376,7 @@ contract TeslaNFT is ERC721URIStorage {
             );
             newplayers.push(
                 Player({
-                    bet_Id: betId,
+                    draw_Id: drawId,
                     nft_Id: currentTokenId,
                     amount: mintPrice,
                     time: block.timestamp,
@@ -388,7 +388,7 @@ contract TeslaNFT is ERC721URIStorage {
                 currentTokenId,
                 msg.sender,
                 tokenURI,
-                betId,
+                drawId,
                 block.timestamp,
                 _referralCode,
                 _totalPriceUSD
@@ -430,8 +430,8 @@ contract TeslaNFT is ERC721URIStorage {
             revert DogeTicket__TransferFailed();
         }
 
-        emit CreateBet(
-            betId,
+        emit CreateDraw(
+            drawId,
             totalPlayers.length,
             totalPlayers[winnerTotalPlayer].nft_Id,
             winnerTotalPlayerAddress,
@@ -471,8 +471,8 @@ contract TeslaNFT is ERC721URIStorage {
             revert DogeTicket__TransferFailed();
         }
 
-        emit CreateNewBet(
-            betId,
+        emit CreateNewDraw(
+            drawId,
             newplayers.length,
             newplayers[winnerNewPlayer].nft_Id,
             winnerNewPlayerAddress,
@@ -484,8 +484,8 @@ contract TeslaNFT is ERC721URIStorage {
         lastNewReward = priceWinner;
         delete newplayers;
         totalPool = 0;
-        betId++;
-        betFeePercentage = betFeePercentage + 110;
+        drawId++;
+        drawFeePercentage = drawFeePercentage + 110;
         winnerNewLock = false;
     }
 
@@ -633,8 +633,8 @@ contract TeslaNFT is ERC721URIStorage {
         return nftToCarPecentage;
     }
 
-    function getBetFeePercentage() public view returns (uint256) {
-        return betFeePercentage;
+    function getDrawFeePercentage() public view returns (uint256) {
+        return drawFeePercentage;
     }
 
     function getListedTokenFromId(
@@ -643,8 +643,8 @@ contract TeslaNFT is ERC721URIStorage {
         return idToListedToken[tokenId];
     }
 
-    function getBetId() public view returns (uint256) {
-        return betId;
+    function getDrawId() public view returns (uint256) {
+        return drawId;
     }
 
     function getLastTotalReward() public view returns (uint256) {

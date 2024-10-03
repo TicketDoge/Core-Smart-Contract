@@ -3,12 +3,12 @@ pragma solidity 0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {console} from "forge-std/console.sol";
-import {TeslaNFT} from "../../src/TeslaNft.sol";
+import {TicketDoge} from "../../src/TicketDoge.sol";
 import {DogeCoin} from "../../src/Token.sol";
 
-contract TeslaNftFuzzTest is Test {
+contract TicketDogeFuzzTest is Test {
     DogeCoin dogeCoin = new DogeCoin();
-    TeslaNFT tesla;
+    TicketDoge ticket;
     address team = address(1);
     address futureProject = address(2);
     address charity = address(3);
@@ -21,7 +21,7 @@ contract TeslaNftFuzzTest is Test {
     uint256 totalDogeWinner = 1e21;
 
     function setUp() public {
-        tesla = new TeslaNFT(
+        ticket = new TicketDoge(
             address(dogeCoin),
             team,
             futureProject,
@@ -50,22 +50,22 @@ contract TeslaNftFuzzTest is Test {
         if (
             user == address(0) ||
             user == address(this) ||
-            user == address(tesla) ||
+            user == address(ticket) ||
             user == address(dogeCoin) ||
             user == address(vm)
         ) {
             return;
         }
 
-        uint256 nftToCarPercentage = tesla.getNftToCarPercentage();
-        uint256 betFeePercentage = tesla.getBetFeePercentage();
+        uint256 nftToCarPercentage = ticket.getNftToCarPercentage();
+        uint256 drawFeePercentage = ticket.getDrawFeePercentage();
 
         uint256 transferAmount = (((totalPrice * nftToCarPercentage) *
-            (10000 + betFeePercentage)) / 1e8);
+            (10000 + drawFeePercentage)) / 1e8);
         dogeCoin.transfer(user, transferAmount);
         vm.startPrank(user);
-        dogeCoin.approve(address(tesla), transferAmount);
-        tesla.createToken(
+        dogeCoin.approve(address(ticket), transferAmount);
+        ticket.createToken(
             tokenURI,
             totalPrice,
             referralCode,
@@ -97,22 +97,22 @@ contract TeslaNftFuzzTest is Test {
         if (
             user == address(0) ||
             user == address(this) ||
-            user == address(tesla) ||
+            user == address(ticket) ||
             user == address(dogeCoin) ||
             user == address(vm)
         ) {
             return;
         }
 
-        uint256 nftToCarPercentage = tesla.getNftToCarPercentage();
-        uint256 betFeePercentage = tesla.getBetFeePercentage();
+        uint256 nftToCarPercentage = ticket.getNftToCarPercentage();
+        uint256 drawFeePercentage = ticket.getDrawFeePercentage();
 
         uint256 transferAmount = (((totalPrice * nftToCarPercentage) *
-            (10000 + betFeePercentage)) / 1e8);
+            (10000 + drawFeePercentage)) / 1e8);
         dogeCoin.transfer(user, transferAmount);
         vm.startPrank(user);
-        dogeCoin.approve(address(tesla), transferAmount);
-        tesla.createToken(
+        dogeCoin.approve(address(ticket), transferAmount);
+        ticket.createToken(
             tokenURI,
             totalPrice,
             referralCode,

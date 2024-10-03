@@ -2,7 +2,7 @@
 pragma solidity 0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {TeslaNFT} from "../../../src/TeslaNft.sol";
+import {TicketDoge} from "../../../src/TicketDoge.sol";
 import {DogeCoin} from "../../../src/Token.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {Handler} from "./Handler.sol";
@@ -10,7 +10,7 @@ import {console} from "forge-std/console.sol";
 
 contract InvariantWithoutReferral is StdInvariant, Test {
     Handler handler;
-    TeslaNFT tesla;
+    TicketDoge ticket;
     DogeCoin dogeCoin;
     address team = address(1);
     address futureProject = address(2);
@@ -23,12 +23,12 @@ contract InvariantWithoutReferral is StdInvariant, Test {
     uint256 feeSpenderReferral = 10;
     uint256 totalDogeWinner = 1e23;
 
-    uint256 currentBetId = 1;
+    uint256 current1DrawId = 1;
     uint256 currentPool;
 
     function setUp() public {
         dogeCoin = new DogeCoin();
-        tesla = new TeslaNFT(
+        ticket = new TicketDoge(
             address(dogeCoin),
             team,
             futureProject,
@@ -52,7 +52,7 @@ contract InvariantWithoutReferral is StdInvariant, Test {
             feeOwnerReferral,
             feeSpenderReferral,
             totalDogeWinner,
-            tesla,
+            ticket,
             dogeCoin
         );
 
@@ -64,10 +64,10 @@ contract InvariantWithoutReferral is StdInvariant, Test {
         uint256 tolerance = 5; // Define tolerance value
 
         address referralOwner = handler.getReferralOwner();
-        if (tesla.getRecentTotalWinner() == referralOwner) {
+        if (ticket.getRecentTotalWinner() == referralOwner) {
             return;
         }
-        if (tesla.getRecentNewWinner() == referralOwner) {
+        if (ticket.getRecentNewWinner() == referralOwner) {
             return;
         }
 
@@ -120,15 +120,15 @@ contract InvariantWithoutReferral is StdInvariant, Test {
     {
         bool isFinedWinnerTransaction = handler.getIsFinedWinnerTransaction();
         if (isFinedWinnerTransaction) {
-            uint256 totalPool = tesla.getTotalPool();
-            address recentNewWinner = tesla.getRecentNewWinner();
-            uint256 lastNewReward = tesla.getLastNewReward();
+            uint256 totalPool = ticket.getTotalPool();
+            address recentNewWinner = ticket.getRecentNewWinner();
+            uint256 lastNewReward = ticket.getLastNewReward();
             uint256 actuallNewWinnerBalance = dogeCoin.balanceOf(
                 recentNewWinner
             );
 
-            address recentTotalWinner = tesla.getRecentTotalWinner();
-            uint256 lastTotalReward = tesla.getLastTotalReward();
+            address recentTotalWinner = ticket.getRecentTotalWinner();
+            uint256 lastTotalReward = ticket.getLastTotalReward();
             uint256 actuallTotalWinnerBalance = dogeCoin.balanceOf(
                 recentTotalWinner
             );

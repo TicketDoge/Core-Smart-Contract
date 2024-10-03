@@ -2,11 +2,11 @@
 pragma solidity 0.8.20;
 
 import {Test, console} from "forge-std/Test.sol";
-import {TeslaNFT, ListedToken} from "../../src/TeslaNft.sol";
+import {TicketDoge, ListedToken} from "../../src/TicketDoge.sol";
 import {DogeCoin} from "../../src/Token.sol";
 
-contract testTeslaNft is Test {
-    TeslaNFT tesla;
+contract testTicketDoge is Test {
+    TicketDoge ticket;
     DogeCoin dogeCoin;
 
     address team = address(1);
@@ -31,7 +31,7 @@ contract testTeslaNft is Test {
 
     function setUp() public {
         dogeCoin = new DogeCoin();
-        tesla = new TeslaNFT(
+        ticket = new TicketDoge(
             address(dogeCoin),
             team,
             futureProject,
@@ -51,20 +51,20 @@ contract testTeslaNft is Test {
         string memory referralcode,
         string memory referralOld
     ) public {
-        uint256 nftToCarPercentage = tesla.getNftToCarPercentage();
-        uint256 betFeePercentage = tesla.getBetFeePercentage();
+        uint256 nftToCarPercentage = ticket.getNftToCarPercentage();
+        uint256 drawFeePercentage = ticket.getDrawFeePercentage();
         dogeCoin.transfer(
             user,
             (((ENTRY_AMOUNT * nftToCarPercentage) *
-                (10000 + betFeePercentage)) / 1e8)
+                (10000 + drawFeePercentage)) / 1e8)
         );
         vm.startPrank(user);
         dogeCoin.approve(
-            address(tesla),
+            address(ticket),
             (((ENTRY_AMOUNT * nftToCarPercentage) *
-                (10000 + betFeePercentage)) / 1e8)
+                (10000 + drawFeePercentage)) / 1e8)
         );
-        tesla.createToken(
+        ticket.createToken(
             "kshfvbksnvklwnj",
             ENTRY_AMOUNT,
             referralcode,
@@ -78,8 +78,8 @@ contract testTeslaNft is Test {
         createNft(user1, "jdchjgyfh", "wlksgnkwsgnwklg");
         createNft(user2, "ksjbvskjbvf", "alejbfakjfn");
         createNft(user3, "akeufbhikf", "askefjbakjsf");
-        address newWinner = tesla.getRecentNewWinner();
-        address totalWinner = tesla.getRecentTotalWinner();
+        address newWinner = ticket.getRecentNewWinner();
+        address totalWinner = ticket.getRecentTotalWinner();
         if (newWinner == totalWinner) {
             vm.assertEq(dogeCoin.balanceOf(newWinner), 12000e17);
         } else {
@@ -90,8 +90,8 @@ contract testTeslaNft is Test {
         createNft(user4, "skejfbh", "skaefbuwksjefb");
         createNft(user5, "slefngsjk", "askejfb");
         createNft(user6, "aeskfhvbes", "amkbfskfj");
-        address newWinner2 = tesla.getRecentNewWinner();
-        address totalWinner2 = tesla.getRecentTotalWinner();
+        address newWinner2 = ticket.getRecentNewWinner();
+        address totalWinner2 = ticket.getRecentTotalWinner();
         if (newWinner2 == totalWinner2) {
             vm.assertEq(dogeCoin.balanceOf(newWinner2), 12132e17);
         } else {
@@ -103,17 +103,17 @@ contract testTeslaNft is Test {
     function testIfTransfersAmountToReferralOwner() public {
         createNft(user1, "referral1", "wlksgnkwsgnw");
         vm.assertEq(dogeCoin.balanceOf(user1), 0);
-        string memory referral = tesla.getReferralCodeById(1);
+        string memory referral = ticket.getReferralCodeById(1);
         dogeCoin.transfer(user2, (((ENTRY_AMOUNT * 10) / 10000) * 9) / 10);
         vm.startPrank(user2);
         dogeCoin.approve(
-            address(tesla),
+            address(ticket),
             (((ENTRY_AMOUNT * 10) / 10000) * 9) / 10
         );
-        tesla.createToken("", ENTRY_AMOUNT, "jgtvujh", referral, ENTRY_AMOUNT);
+        ticket.createToken("", ENTRY_AMOUNT, "jgtvujh", referral, ENTRY_AMOUNT);
         vm.stopPrank();
-        uint256 tokenId = tesla.getTokenIdByReferral(referral);
-        ListedToken memory token = tesla.getListedTokenFromId(tokenId);
+        uint256 tokenId = ticket.getTokenIdByReferral(referral);
+        ListedToken memory token = ticket.getListedTokenFromId(tokenId);
         vm.assertEq(token.totalreferralUsed, 1);
         vm.assertEq(dogeCoin.balanceOf(user2), 0);
         vm.assertEq(dogeCoin.balanceOf(user1), 1512e17);
@@ -122,13 +122,13 @@ contract testTeslaNft is Test {
     function testReferralOwnerChangesIfNftSales() public {
         createNft(user1, "referral1", "wlksgnkwsgnw");
         vm.prank(user1);
-        tesla.transferFrom(user1, user2, 1);
-        string memory referral = tesla.getReferralCodeById(1);
+        ticket.transferFrom(user1, user2, 1);
+        string memory referral = ticket.getReferralCodeById(1);
 
         createNft(user3, "referral2", referral);
 
-        uint256 tokenId = tesla.getTokenIdByReferral(referral);
-        ListedToken memory token = tesla.getListedTokenFromId(tokenId);
+        uint256 tokenId = ticket.getTokenIdByReferral(referral);
+        ListedToken memory token = ticket.getListedTokenFromId(tokenId);
         vm.assertEq(token.totalreferralUsed, 1);
         vm.assertEq(dogeCoin.balanceOf(user1), 0);
         vm.assertEq(dogeCoin.balanceOf(user2), 1512e17);
@@ -144,24 +144,24 @@ contract testTeslaNft is Test {
     function testReferralWorksFine() public {
         createNft(user1, "referral1", "wlksgnkwsgnw");
 
-        string memory referral = tesla.getReferralCodeById(1);
+        string memory referral = ticket.getReferralCodeById(1);
         dogeCoin.transfer(user2, (((ENTRY_AMOUNT * 10) / 10000) * 9) / 10);
         vm.startPrank(user2);
         dogeCoin.approve(
-            address(tesla),
+            address(ticket),
             (((ENTRY_AMOUNT * 10) / 10000) * 9) / 10
         );
-        tesla.createToken("", ENTRY_AMOUNT, "jgtvujh", referral, ENTRY_AMOUNT);
+        ticket.createToken("", ENTRY_AMOUNT, "jgtvujh", referral, ENTRY_AMOUNT);
         vm.stopPrank();
 
-        string memory referral2 = tesla.getReferralCodeById(2);
+        string memory referral2 = ticket.getReferralCodeById(2);
         dogeCoin.transfer(user3, (((ENTRY_AMOUNT * 10) / 10000) * 9) / 10);
         vm.startPrank(user3);
         dogeCoin.approve(
-            address(tesla),
+            address(ticket),
             (((ENTRY_AMOUNT * 10) / 10000) * 9) / 10
         );
-        tesla.createToken(
+        ticket.createToken(
             "",
             ENTRY_AMOUNT,
             "jgtvuikhbijh",
@@ -170,14 +170,14 @@ contract testTeslaNft is Test {
         );
         vm.stopPrank();
 
-        string memory referral3 = tesla.getReferralCodeById(1);
+        string memory referral3 = ticket.getReferralCodeById(1);
         dogeCoin.transfer(user4, (((ENTRY_AMOUNT * 10) / 10000) * 9) / 10);
         vm.startPrank(user4);
         dogeCoin.approve(
-            address(tesla),
+            address(ticket),
             (((ENTRY_AMOUNT * 10) / 10000) * 9) / 10
         );
-        tesla.createToken(
+        ticket.createToken(
             "",
             ENTRY_AMOUNT,
             "jgtvuikhbsdfcijh",
@@ -186,17 +186,17 @@ contract testTeslaNft is Test {
         );
         vm.stopPrank();
 
-        vm.assertEq(tesla.getAllDirects(1), 3);
-        vm.assertEq(tesla.getAllDirects(2), 1);
-        vm.assertEq(tesla.getAllDirects(3), 0);
+        vm.assertEq(ticket.getAllDirects(1), 3);
+        vm.assertEq(ticket.getAllDirects(2), 1);
+        vm.assertEq(ticket.getAllDirects(3), 0);
     }
 
     function testFailsIfNotEnoughDogePrice() public {
         dogeCoin.transfer(address(1), (2e23));
         vm.startPrank(address(1));
-        dogeCoin.approve(address(tesla), (2e23));
+        dogeCoin.approve(address(ticket), (2e23));
         vm.expectRevert(0xf4844814);
-        tesla.createToken(
+        ticket.createToken(
             "kshfvbksnvklwnj",
             2e23,
             "lksnvlkfns",
@@ -209,26 +209,26 @@ contract testTeslaNft is Test {
     function testRevertIfSomeOneUseHisOwnReferral() public {
         createNft(user1, "referral1", "wlksgnkwsgnw");
         vm.prank(user1);
-        string memory referral = tesla.getReferralCodeById(1);
-        address owner = tesla.getReferralOwner(referral);
+        string memory referral = ticket.getReferralCodeById(1);
+        address owner = ticket.getReferralOwner(referral);
         vm.assertEq(owner, user1);
 
-        uint256 nftToCarPercentage = tesla.getNftToCarPercentage();
-        uint256 betFeePercentage = tesla.getBetFeePercentage();
+        uint256 nftToCarPercentage = ticket.getNftToCarPercentage();
+        uint256 drawFeePercentage = ticket.getDrawFeePercentage();
         dogeCoin.transfer(
             user1,
             (((ENTRY_AMOUNT * nftToCarPercentage) *
-                (10000 + betFeePercentage)) / 1e8)
+                (10000 + drawFeePercentage)) / 1e8)
         );
         vm.startPrank(user1);
         dogeCoin.approve(
-            address(tesla),
+            address(ticket),
             (((ENTRY_AMOUNT * nftToCarPercentage) *
-                (10000 + betFeePercentage)) / 1e8)
+                (10000 + drawFeePercentage)) / 1e8)
         );
 
         vm.expectRevert();
-        tesla.createToken(
+        ticket.createToken(
             "kshfvbksnvklwnj",
             ENTRY_AMOUNT,
             "referral2",
