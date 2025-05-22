@@ -4,14 +4,20 @@ pragma solidity 0.8.22;
 import {Test, console} from "forge-std/Test.sol";
 import {TicketDoge} from "../../src/TicketDoge.sol";
 import {USDT} from "../mocks/USDT.sol";
+import {Doge} from "../mocks/Doge.sol";
+import {MockV3Aggregator} from "../mocks/MockAggregator.sol";
 
 contract CounterTest is Test {
     TicketDoge ticket;
     USDT usdt;
+    Doge doge;
+    MockV3Aggregator feed;
+
     address owner = address(100);
     address teamWallet = address(101);
     address futureWallet = address(102);
     address charityWallet = address(103);
+    address dogeHolder = address(104);
 
     address user1 = address(1);
     address user2 = address(2);
@@ -42,7 +48,25 @@ contract CounterTest is Test {
     function setUp() public {
         vm.prank(owner);
         usdt = new USDT();
-        ticket = new TicketDoge(owner, address(usdt), 14000000000000000000, teamWallet, futureWallet, charityWallet);
+        vm.prank(dogeHolder);
+        doge = new Doge();
+
+        feed = new MockV3Aggregator(10, 1e9);
+
+        ticket = new TicketDoge(
+            owner,
+            address(usdt),
+            address(doge),
+            14000000000000000000,
+            teamWallet,
+            futureWallet,
+            charityWallet,
+            dogeHolder,
+            address(feed)
+        );
+
+        vm.prank(dogeHolder);
+        doge.approve(address(ticket), 1e40);
     }
 
     function mintTicket(address user) public {
@@ -146,17 +170,32 @@ contract CounterTest is Test {
     function testUseReferral() public {
         mintTicket(user1);
         vm.assertEq(usdt.balanceOf(user1), 0);
-        uint256 amount = 20000000000000000000;
-        mintTicket(user2, amount, ticket.ticketToReferral(1));
-        vm.assertEq(usdt.balanceOf(user1), (amount * 90 * 21) / 10000);
-        vm.assertEq(usdt.balanceOf(user2), (amount * 10) / 100);
 
+        uint256 usdtBalanceBefore = usdt.balanceOf(dogeHolder);
+        uint256 dogeBalanceBefore = doge.balanceOf(dogeHolder);
+        uint256 amount = 20e18;
+        mintTicket(user2, amount, ticket.ticketToReferral(1));
+        uint256 usdtBalanceAfter = usdt.balanceOf(dogeHolder);
+        uint256 dogeBalanceAfter = doge.balanceOf(dogeHolder);
+        uint256 usdtEquivalent = (amount * 90 * 21) / 10000;
+        uint256 dogeEquivalent = usdtEquivalent * 1e10 / 1e9;
+        uint256 dogeAmount = dogeEquivalent / 1e10;
+        vm.assertEq(usdtBalanceAfter - usdtBalanceBefore, usdtEquivalent);
+        vm.assertEq(dogeBalanceBefore - dogeBalanceAfter, dogeAmount);
+        vm.assertEq(doge.balanceOf(user1), dogeAmount);
+        vm.assertEq(doge.balanceOf(user1), 378e7);
+        vm.assertEq(usdt.balanceOf(user2), (amount * 10) / 100);
         TicketDoge.Ticket memory token1 = ticket.getTicket(1);
         vm.assertEq(token1.timesUsed, 1);
         vm.assertEq(token1.earnings, (amount * 90 * 21) / 10000);
-
         TicketDoge.Ticket memory token2 = ticket.getTicket(2);
         vm.assertEq(token2.referrerId, 1);
+
+        feed.updateAnswer(2e9);
+
+        mintTicket(user3, amount, ticket.ticketToReferral(2));
+        vm.assertEq(doge.balanceOf(user2), dogeAmount / 2);
+        vm.assertEq(doge.balanceOf(user2), 378e7 / 2);
     }
 
     function testSelectWinner() public {

@@ -3,20 +3,41 @@ pragma solidity 0.8.22;
 
 import {TicketDoge} from "../../../src/TicketDoge.sol";
 import {USDT} from "../../mocks/USDT.sol";
+import {Doge} from "../../mocks/Doge.sol";
 import {Test} from "forge-std/Test.sol";
+import {MockV3Aggregator} from "../../mocks/MockAggregator.sol";
 
 contract Handler is Test {
     TicketDoge ticket;
     USDT usdt;
+    Doge doge;
+    MockV3Aggregator feed;
     address owner = address(100);
     address teamWallet = address(101);
     address futureWallet = address(102);
     address charityWallet = address(103);
+    address dogeHolder = address(104);
 
     constructor() {
         vm.prank(owner);
         usdt = new USDT();
-        ticket = new TicketDoge(owner, address(usdt), 14000000000000000000, teamWallet, futureWallet, charityWallet);
+        vm.prank(dogeHolder);
+        doge = new Doge();
+        feed = new MockV3Aggregator(10, 1e9);
+        ticket = new TicketDoge(
+            owner,
+            address(usdt),
+            address(doge),
+            14000000000000000000,
+            teamWallet,
+            futureWallet,
+            charityWallet,
+            dogeHolder,
+            address(feed)
+        );
+
+        vm.prank(dogeHolder);
+        doge.approve(address(ticket), 1e40);
     }
 
     function mintTicket(address user, uint256 amount) public {

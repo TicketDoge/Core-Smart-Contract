@@ -6,8 +6,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import { AggregatorV3Interface} from "";
-
+import {AggregatorV3Interface} from "./interfaces/AggregatorV3Interface.sol";
 
 /// @title TicketDoge Lottery Contract
 /// @notice Manages ticket minting, referral rewards, and draw mechanics
@@ -38,6 +37,8 @@ contract TicketDoge is ERC721URIStorage, Ownable {
 
     IERC20 public immutable usdtToken;
     IERC20 public immutable dogeToken;
+    address internal immutable priceFeed;
+
     LotteryState public currentState = LotteryState.Open;
 
     uint256 public minEntry;
@@ -101,7 +102,8 @@ contract TicketDoge is ERC721URIStorage, Ownable {
         address _teamWallet,
         address _futureWallet,
         address _charityWallet,
-        address _dogeWallet
+        address _dogeWallet,
+        address _priceFeed
     ) ERC721("Ticket Doge", "TDN") Ownable(initialOwner) {
         usdtToken = IERC20(_usdt);
         dogeToken = IERC20(_doge);
@@ -112,6 +114,7 @@ contract TicketDoge is ERC721URIStorage, Ownable {
         futureProjWallet = _futureWallet;
         charityWallet = _charityWallet;
         dogeWallet = _dogeWallet;
+        priceFeed = _priceFeed;
     }
 
     /// @notice Mints a new lottery ticket
@@ -193,7 +196,7 @@ contract TicketDoge is ERC721URIStorage, Ownable {
                 ancestor = tickets[ancestor].referrerId;
             }
 
-            uint256 rewardInDoge = _convertAmount(reward);
+            uint256 rewardInDoge = _toDoge(reward);
             usdtToken.transfer(dogeWallet, reward);
             dogeToken.transferFrom(dogeWallet, upline, rewardInDoge);
             amount -= reward;
@@ -295,10 +298,13 @@ contract TicketDoge is ERC721URIStorage, Ownable {
     }
 
     function _toDoge(uint256 amount) internal view returns (uint256) {
-        (, int256 price,,,) = AggregatorV3Interface(pf).staleCheckLatestRoundData();
+        uint256 usdtdecimals = IERC20Metadata(address(usdtToken)).decimals();
+        uint256 dogedecimals = IERC20Metadata(address(dogeToken)).decimals();
+        (, int256 price,,,) = AggregatorV3Interface(priceFeed).latestRoundData();
         require(price > 0, "Invalid price");
-        uint256 addDecimals = 18 - AggregatorV3Interface(pf).decimals();
-        return ((uint256(price) * (10 ** addDecimals)) * amount) / PRECISION;
+        uint256 addDecimals = usdtdecimals - AggregatorV3Interface(priceFeed).decimals();
+        uint256 dogeEquivalent = amount * (10 ** usdtdecimals) / (uint256(price) * 10 ** addDecimals);
+        return dogeEquivalent * (10 ** dogedecimals) / (10 ** usdtdecimals);
     }
 
     /// @dev Ensures the contract is in expected state
