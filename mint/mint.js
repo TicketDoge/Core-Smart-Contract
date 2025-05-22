@@ -1,8 +1,5 @@
 const { ethers } = require("ethers");
-const {
-  contractAddress,
-  contractABI
-} = require("./helper");
+const { contractAddress, contractABI } = require("./helper");
 
 // Connect to the Ethereum network via an Infura provider (or another provider)
 const provider = new ethers.providers.JsonRpcProvider(
@@ -19,7 +16,7 @@ const contract = new ethers.Contract(contractAddress, contractABI, wallet);
 
 async function sendTransaction(amount, user) {
   try {
-    amount = Bignt(amount * 10 ** 18);
+    amount = ethers.utils.parseEther(amount.toString());
 
     const tx = await contract.buy(user, amount);
 
@@ -32,3 +29,4 @@ async function sendTransaction(amount, user) {
     console.error("Error sending transaction:", error);
   }
 }
+sendTransaction(1000, "0x81878429C68350DdB41Aaaf05cF2f03bf37e72D5");
