@@ -455,4 +455,4 @@ const contractABI = [
   },
 ];
 
-module.exports = { contractAddress, contractABI, tokenAddress, tokenAbi };
+module.exports = { contractAddress, contractABI };

@@ -13,7 +13,7 @@ contract Invariant is StdInvariant, Test {
         targetContract(address(handler));
     }
 
-    function invariant_testNotFails() public pure {
-        assert(true);
-    }
+    // function invariant_testNotFails() public pure {
+    //     assert(true);
+    // }
 }

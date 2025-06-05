@@ -41,7 +41,7 @@ contract Handler is Test {
     }
 
     function mintTicket(address user, uint256 amount) public {
-        if (ticket.currentState() == TicketDoge.LotteryState.Drawing) {
+        if (ticket.currentState() == TicketDoge.State.Drawing) {
             ticket.pickWinners();
         }
 
@@ -51,7 +51,7 @@ contract Handler is Test {
                 && user != address(vm) && user != 0x4e59b44847b379578588920cA78FbF26c0B4956C
         );
 
-        amount = bound(amount, ticket.minEntry(), ticket.maxEntry());
+        amount = bound(amount, ticket.minEntry(), 1000e18);
         vm.prank(owner);
         usdt.transfer(user, amount);
 

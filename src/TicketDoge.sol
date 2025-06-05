@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.22;
+pragma solidity 0.8.22;
 
 import {ERC721URIStorage, ERC721} from "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
@@ -7,22 +7,24 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {AggregatorV3Interface} from "./interfaces/AggregatorV3Interface.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {console} from "forge-std/console.sol";
 
 /// @title TicketDoge Lottery Contract
 /// @notice Manages ticket minting, referral rewards, and draw mechanics
 contract TicketDoge is ERC721URIStorage, Ownable {
+    using SafeERC20 for IERC20;
     /// @notice Possible states of the lottery
-    enum LotteryState {
+
+    enum State {
         Open,
-        Drawing,
-        Paused
+        Drawing
     }
 
     /// @notice Represents a lottery ticket with referral tracking
     struct Ticket {
         string uri; // Metadata URI
         uint256 id; // NFT token ID
-        uint256 drawId; // Associated draw round
         address payable holder; // Ticket owner
         uint256 price; // Paid price in USDT
         string referralCode; // Referral code for this ticket
@@ -39,10 +41,9 @@ contract TicketDoge is ERC721URIStorage, Ownable {
     IERC20 public immutable dogeToken;
     address internal immutable priceFeed;
 
-    LotteryState public currentState = LotteryState.Open;
+    State public currentState = State.Open;
 
     uint256 public minEntry;
-    uint256 public maxEntry;
 
     uint256 private nextTokenId;
 
@@ -108,8 +109,7 @@ contract TicketDoge is ERC721URIStorage, Ownable {
         usdtToken = IERC20(_usdt);
         dogeToken = IERC20(_doge);
         minEntry = _minEntry;
-        maxEntry = (125_000 * 10 ** IERC20Metadata(_usdt).decimals()) / PRIZE_MULTIPLIER;
-        TARGET_POOL = 250 * 10 ** IERC20Metadata(_usdt).decimals(); // @
+        TARGET_POOL = 105 * 10 ** IERC20Metadata(_usdt).decimals(); // @
         teamWallet = _teamWallet;
         futureProjWallet = _futureWallet;
         charityWallet = _charityWallet;
@@ -130,9 +130,8 @@ contract TicketDoge is ERC721URIStorage, Ownable {
         string memory refCode,
         string memory uri
     ) external {
-        _ensureState(LotteryState.Open, "Draw not open");
+        _ensureState(State.Open, "Draw not open");
         _ensure(ticketPrice >= minEntry, "Below minimum entry");
-        _ensure(ticketPrice <= maxEntry, "Above maximum entry");
 
         // Generate unique referral code for this ticket
         string memory newCode = _generateUniqueReferral(recipient);
@@ -157,16 +156,7 @@ contract TicketDoge is ERC721URIStorage, Ownable {
         // Record ticket data
         uint256 xiomPts = _randomXiom(recipient);
         tickets[nextTokenId] = Ticket(
-            uri,
-            nextTokenId,
-            drawCount,
-            payable(recipient),
-            ticketPrice,
-            newCode,
-            0,
-            0,
-            useReferral ? uplineId : 0,
-            xiomPts
+            uri, nextTokenId, payable(recipient), ticketPrice, newCode, 0, 0, useReferral ? uplineId : 0, xiomPts
         );
 
         // Register referral mappings
@@ -212,38 +202,40 @@ contract TicketDoge is ERC721URIStorage, Ownable {
         // Add remainder to pool and check draw trigger
         drawPool += (amount * (BPS_DIVIDER - TEAM_FEE_BPS - FUTURE_FEE_BPS - CHARITY_FEE_BPS)) / BPS_DIVIDER;
         if (drawPool >= TARGET_POOL) {
-            currentState = LotteryState.Drawing;
+            currentState = State.Drawing;
         }
     }
 
     /// @notice Selects winners when pool target is reached
     function pickWinners() external {
-        _ensureState(LotteryState.Drawing, "Pool target not met");
+        _ensureState(State.Drawing, "Pool target not met");
 
-        uint256 newIdx = _randomIndex(recentEntries.length, 0);
-        uint256 oldIdx = _randomIndex(allEntries.length, 1);
-
-        uint256 newTicketId = recentEntries[newIdx];
-        uint256 oldTicketId = allEntries[oldIdx];
-        address newWinner = ticketToOwner[newTicketId];
-        address oldWinner = ticketToOwner[oldTicketId];
-
-        uint256 prizeNew = (tickets[newTicketId].price * PRIZE_MULTIPLIER) / 1000;
-        uint256 prizeOld = (tickets[oldTicketId].price * PRIZE_MULTIPLIER) / 1000;
-
-        usdtToken.transfer(newWinner, prizeNew);
-        usdtToken.transfer(oldWinner, prizeOld);
-
-        lastNewWinners.push(newWinner);
-        lastOldWinners.push(oldWinner);
-        lastNewPrizes.push(prizeNew);
-        lastOldPrizes.push(prizeOld);
+        if (nextTokenId > 21) {
+            address[] memory sortedUsers = new address[](nextTokenId);
+            uint256[] memory sortedXioms = new uint256[](nextTokenId);
+            for (uint256 i = 1; i <= nextTokenId; i++) {
+                uint256 xioms = tickets[i].xiom;
+                for (uint256 j = 0; j < i + 1; j++) {
+                    if (xioms > sortedXioms[j]) {
+                        for (uint256 k = i + 1; k < j; k--) {
+                            sortedXioms[k] = sortedXioms[k - 1];
+                            sortedUsers[k] = sortedUsers[k - 1];
+                        }
+                        sortedXioms[j] = xioms;
+                        sortedUsers[j] = tickets[i].holder;
+                    }
+                }
+            }
+            for (uint256 i = 0; i < 21; i++) {
+                usdtToken.safeTransfer(sortedUsers[i], 5 * 10 ** IERC20Metadata(address(usdtToken)).decimals()); //@
+            }
+        } else {
+            for (uint256 i = 1; i <= nextTokenId; i++) {
+                usdtToken.safeTransfer(tickets[i].holder, 5 * 10 ** IERC20Metadata(address(usdtToken)).decimals()); //@
+            }
+        }
 
         _boostXioms();
-        delete recentEntries;
-        drawPool -= (prizeNew + prizeOld);
-        drawCount++;
-        currentState = LotteryState.Open;
     }
 
     /// @notice Override to keep referral ownership when transferring tickets
@@ -252,11 +244,6 @@ contract TicketDoge is ERC721URIStorage, Ownable {
         referralToOwner[code] = to;
         tickets[tokenId].holder = payable(to);
         super.transferFrom(from, to, tokenId);
-    }
-
-    /// @dev Generates a pseudo-random index
-    function _randomIndex(uint256 length, uint256 salt) internal view returns (uint256) {
-        return uint256(keccak256(abi.encodePacked(block.timestamp, blockhash(block.number - 1), salt))) % length;
     }
 
     /// @dev Creates a unique 8-char referral code
@@ -308,7 +295,7 @@ contract TicketDoge is ERC721URIStorage, Ownable {
     }
 
     /// @dev Ensures the contract is in expected state
-    function _ensureState(LotteryState expected, string memory msgError) internal view {
+    function _ensureState(State expected, string memory msgError) internal view {
         if (currentState != expected) revert TDError(msgError);
     }
 
