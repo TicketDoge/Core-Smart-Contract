@@ -5,13 +5,13 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-contract ICO is Ownable {
+contract AquatimusICO is Ownable {
     using SafeERC20 for IERC20;
 
-    IERC20 public immutable MKFS;
+    IERC20 public immutable AQUAT;
     IERC20 public immutable USDT;
 
-    // Price: number of USDT units per MKFS × divisor
+    // Price: number of USDT units per AQUAT × divisor
     uint256 public price = 24;
     uint256 public divisor = 10_000;
 
@@ -19,18 +19,18 @@ contract ICO is Ownable {
     uint256 public totalSoldTokens;
     uint256 public totalUsdtRaised;
 
-    event TokensPurchased(address indexed buyer, address indexed receiver, uint256 usdtAmount, uint256 mkfsAmount);
+    event TokensPurchased(address indexed buyer, address indexed receiver, uint256 usdtAmount, uint256 aquatAmount);
     event ICOEnded(uint256 unsoldTokens);
     event PriceUpdated(uint256 newPrice, uint256 newDivisor);
 
-    constructor(address mkfs_, address usdt_) Ownable(msg.sender) {
-        require(mkfs_ != address(0) && usdt_ != address(0), "Zero address");
-        MKFS = IERC20(mkfs_);
-        USDT = IERC20(usdt_);
+    constructor(address initialOwner, address aquat, address usdt) Ownable(initialOwner) {
+        require(aquat != address(0) && usdt != address(0), "Zero address");
+        AQUAT = IERC20(aquat);
+        USDT = IERC20(usdt);
     }
 
-    /// @notice Buy MKFS tokens by spending USDT
-    /// @param receiver Address to receive MKFS tokens
+    /// @notice Buy AQUAT tokens by spending USDT
+    /// @param receiver Address to receive AQUAT tokens
     /// @param amount Amount of USDT to spend (in USDT’s smallest unit)
     function buy(address receiver, uint256 amount) external {
         require(!isEnded, "ICO ended");
@@ -42,8 +42,8 @@ contract ICO is Ownable {
         // Pull USDT from buyer to this contract
         USDT.safeTransferFrom(msg.sender, owner(), usdAmount);
 
-        // Send MKFS from contract balance to receiver
-        MKFS.safeTransfer(receiver, amount);
+        // Send AQUAT from contract balance to receiver
+        AQUAT.safeTransfer(receiver, amount);
 
         totalUsdtRaised += usdAmount;
         totalSoldTokens += amount;
@@ -51,12 +51,12 @@ contract ICO is Ownable {
         emit TokensPurchased(msg.sender, receiver, usdAmount, amount);
     }
 
-    /// @notice Owner can end the ICO and withdraw remaining MKFS
+    /// @notice Owner can end the ICO and withdraw remaining AQUAT
     function endICO() external onlyOwner {
         require(!isEnded, "Already ended");
-        uint256 unsold = MKFS.balanceOf(address(this));
+        uint256 unsold = AQUAT.balanceOf(address(this));
         if (unsold > 0) {
-            MKFS.safeTransfer(owner(), unsold);
+            AQUAT.safeTransfer(owner(), unsold);
         }
         isEnded = true;
         emit ICOEnded(unsold);
@@ -70,8 +70,8 @@ contract ICO is Ownable {
         emit PriceUpdated(newPrice, newDivisor);
     }
 
-    /// @notice Check how many MKFS tokens remain in the contract
+    /// @notice Check how many AQUAT tokens remain in the contract
     function remainingTokens() external view returns (uint256) {
-        return MKFS.balanceOf(address(this));
+        return AQUAT.balanceOf(address(this));
     }
 }

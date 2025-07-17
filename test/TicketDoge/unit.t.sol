@@ -117,8 +117,7 @@ contract CounterTest is Test {
         vm.assertEq(usdt.balanceOf(futureWallet), (MINIMUM_ENTRANCE * 21) / 100);
         vm.assertEq(usdt.balanceOf(charityWallet), (MINIMUM_ENTRANCE * 8) / 100);
 
-        vm.prank(user1);
-        TicketDoge.Ticket memory token = ticket.myTickets()[0];
+        TicketDoge.Ticket memory token = ticket.userTickets(user1)[0];
 
         vm.assertEq(token.uri, "");
         vm.assertEq(token.holder, user1);
@@ -198,6 +197,8 @@ contract CounterTest is Test {
     }
 
     function testSelectWinner() public {
+        vm.assertEq(usdt.balanceOf(user1), 0);
+        vm.assertEq(usdt.balanceOf(user2), 0);
         mintTicket(user1);
         mintTicket(user2, 20000000000000000000);
         mintTicket(user3, 30000000000000000000);
@@ -209,6 +210,8 @@ contract CounterTest is Test {
         mintTicket(user9, 25000000000000000000);
         mintTicket(user10, 27000000000000000000);
         ticket.pickWinners();
+
+        vm.assertEq(usdt.balanceOf(user1), 5e18);
 
         // vm.prank(owner);
         // usdt.transfer(user19, MINIMUM_ENTRANCE);
@@ -292,5 +295,31 @@ contract CounterTest is Test {
         vm.assertEq(ticket.xiomOf(2), initXiom2 + 4500);
         vm.assertEq(ticket.xiomOf(3), initXiom3 + 1500);
         vm.assertEq(ticket.xiomOf(4), initXiom4 + 0);
+    }
+
+    function testChangeOwner() public {
+        mintTicket(user1);
+        vm.assertEq(ticket.balanceOf(user1), 1);
+        vm.assertEq(ticket.balanceOf(user2), 0);
+        TicketDoge.Ticket memory token = ticket.userTickets(user1)[0];
+        vm.assertEq(token.uri, "");
+        vm.assertEq(token.holder, user1);
+        vm.assertEq(token.price, MINIMUM_ENTRANCE);
+        vm.assertEq(token.referrerId, 0);
+        vm.assertEq(token.timesUsed, 0);
+        vm.assertEq(token.earnings, 0);
+
+        vm.prank(user1);
+        ticket.safeTransferFrom(user1, user2, 1);
+
+        vm.assertEq(ticket.balanceOf(user1), 0);
+        vm.assertEq(ticket.balanceOf(user2), 1);
+        TicketDoge.Ticket memory token2 = ticket.userTickets(user2)[0];
+        vm.assertEq(token2.uri, "");
+        vm.assertEq(token2.holder, user2);
+        vm.assertEq(token2.price, MINIMUM_ENTRANCE);
+        vm.assertEq(token2.referrerId, 0);
+        vm.assertEq(token2.timesUsed, 0);
+        vm.assertEq(token2.earnings, 0);
     }
 }

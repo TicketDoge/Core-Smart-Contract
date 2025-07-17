@@ -1,334 +1,492 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.22;
+
 import {ERC721URIStorage, ERC721} from "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import {console} from "forge-std/console.sol";
+import {AggregatorV3Interface} from "./interfaces/AggregatorV3Interface.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
+/// @title TicketDoge Lottery Contract (with on-chain “top21” leaderboard)
+/// @notice Manages ticket minting, referral rewards, and 21-winner payout using a fixed-size array
 contract TicketDoge is ERC721URIStorage, Ownable {
+    using SafeERC20 for IERC20;
+
+    /// @notice Possible states of the lottery
     enum State {
-        Started,
-        SelectingWinners,
-        Paused
+        Open,
+        Distributing
     }
 
-    struct ListedToken {
-        string tokenURI;
-        uint256 tokenId;
-        uint256 drawId;
-        address payable owner;
-        uint256 price;
-        string referral;
-        uint256 totalreferralUsed;
-        uint256 totalReferralEarned;
-        uint256 uplineId;
-        uint256 xiom;
+    /// @notice Represents a lottery ticket with referral tracking
+    struct Ticket {
+        string uri;           // Metadata URI
+        uint256 id;           // NFT token ID
+        address payable holder; // Ticket owner
+        uint256 price;        // Paid price in USDT
+        string referralCode;  // Referral code for this ticket
+        uint256 timesUsed;    // Number of times this referral was used
+        uint256 earnings;     // Total referral earnings (in USDT)
+        uint256 referrerId;   // Upline ticket ID (0 if none)
+        uint256 xiom;         // Loyalty points
     }
 
-    error TicketDoge__Error(string errorMessage);
+    /// @notice Error wrapper
+    error TDError(string reason);
 
-    IERC20 public USDT;
-    uint256 public USDT_DESIMALS;
+    IERC20 public immutable usdtToken;
+    IERC20 public immutable dogeToken;
+    address internal immutable priceFeed;
 
-    State public state = State.Started;
+    State public currentState = State.Open;
 
-    uint256 public MINIMUM_ENTRANCE;
-    uint256 public MAXIMUM_ENTRANCE;
+    uint256 public minEntry;
+    uint256 private nextTokenId;
 
-    uint256 private _tokenId;
+    // Fee wallets (immutable)
+    address public immutable teamWallet;
+    address public immutable futureProjWallet;
+    address public immutable charityWallet;
 
-    address public immutable TEAM_BENEFIT_WALLET;
-    uint256 public constant TEAM_BENEFIT_FEE = 21;
-    address public immutable FUTURE_PROJECT_WALLET;
-    uint256 public constant FUTURE_PROJECT_FEE = 21;
-    address public immutable CHARITY_WALLET;
-    uint256 public constant CHARITY_FEE = 8;
+    // Doge Wallet
+    address private immutable dogeWallet;
 
-    uint256[] newPlayers;
-    uint256[] oldPlayers;
+    // Fee percentages (basis points)
+    uint256 public constant TEAM_FEE_BPS = 21;
+    uint256 public constant FUTURE_FEE_BPS = 21;
+    uint256 public constant CHARITY_FEE_BPS = 8;
 
-    uint256 public drawPool;
-    uint256 public drawId = 1;
-    uint256 public constant TARGET_DRAW_BALANCE = 250000000000000000000;
+    // Draw pool and configuration
+    uint256 public rewardPool;
+    uint256 public immutable TARGET_POOL; // e.g. 250 USDT (for Test)
 
-    uint256 public REFERRER_REWARD = 10;
-    uint256 public REFERRAL_REWARD = 21;
-    uint256 public DIVIDER = 100;
+    // Referral & prize settings
+    uint256 public constant REFERRER_REWARD_BPS = 10;
+    uint256 public constant REFERRAL_REWARD_BPS = 21;
+    uint256 public constant BPS_DIVIDER = 100;
+    uint256 public constant PRIZE_MULTIPLIER = 3333;
 
-    uint256 public PRIZE_COEFFICIANT = 3333;
+    // Tracking all minted ticket IDs
+    uint256[] private allEntries;
 
-    address[] newPlayersWinners;
-    address[] oldPlayersWinners;
-    uint256[] newPlayersWinnersPrizes;
-    uint256[] oldPlayersWinnersPrizes;
+    // Mappings for tickets/referrals
+    mapping(uint256 => Ticket) public tickets;
+    mapping(string => bool) public referralExists;
+    mapping(string => uint256) public referralToTicket;
+    mapping(string => address) public referralToOwner;
+    mapping(uint256 => string) public ticketToReferral;
+    mapping(uint256 => address) public ticketToOwner;
 
-    mapping(uint256 tokenId => ListedToken token) public idToListedToken;
-    mapping(address user => bool isUser) public isUser;
-    mapping(string referralCode => bool isrefferal) public isrefferal;
-    mapping(string referralCode => address owner) public referralToOwner;
-    mapping(string referralCode => uint256 token) public referralToTokenId;
-    mapping(uint256 tokenId => string referralCode) public tokenIdToReferral;
-    mapping(uint256 tokenId => address owner) public tokenIdToOwner;
+    // ───────────────────────────────────────────────
+    // NEW: Track which addresses have already won ANY previous draw
+    mapping(address => bool) public hasWon;
 
+    // NEW: Fixed-size “leaderboard” of at most 21 ticket IDs, sorted by descending xiom
+    uint256[] public topTicketIds;
+    uint256 public constant MAX_WINNERS = 21;
+    // ───────────────────────────────────────────────
+
+    /// @param initialOwner   Owner of the contract
+    /// @param _usdt          Address of USDT token
+    /// @param _doge          Address of Doge token
+    /// @param _minEntry      Minimum ticket price in USDT (wei)
+    /// @param _teamWallet    Team fee receiver
+    /// @param _futureWallet  Future project fee receiver
+    /// @param _charityWallet Charity fee receiver
+    /// @param _dogeWallet    Address that holds Doge for referral payouts
+    /// @param _priceFeed     Chainlink price feed (Doge/USD)
     constructor(
         address initialOwner,
         address _usdt,
-        uint256 _minimumEntrance,
-        address _teamBenefitWallet,
-        address _futureProjectWallet,
-        address _charityWallet
+        address _doge,
+        uint256 _minEntry,
+        address _teamWallet,
+        address _futureWallet,
+        address _charityWallet,
+        address _dogeWallet,
+        address _priceFeed
     ) ERC721("Ticket Doge", "TDN") Ownable(initialOwner) {
-        USDT = IERC20(_usdt);
-        USDT_DESIMALS = IERC20Metadata(_usdt).decimals();
-
-        MINIMUM_ENTRANCE = _minimumEntrance;
-        MAXIMUM_ENTRANCE = uint256(125000000000000000000000) / uint256(3333);
-
-        TEAM_BENEFIT_WALLET = _teamBenefitWallet;
-        FUTURE_PROJECT_WALLET = _futureProjectWallet;
-        CHARITY_WALLET = _charityWallet;
+        usdtToken = IERC20(_usdt);
+        dogeToken = IERC20(_doge);
+        minEntry = _minEntry;
+        TARGET_POOL = 105 * 10 ** IERC20Metadata(_usdt).decimals(); // e.g. 105 USDT
+        teamWallet = _teamWallet;
+        futureProjWallet = _futureWallet;
+        charityWallet = _charityWallet;
+        dogeWallet = _dogeWallet;
+        priceFeed = _priceFeed;
     }
 
-    function createNft(
+    // ───────────────────────────────────────────────
+    // 1) MINT A NEW LOTTERY TICKET
+    // ───────────────────────────────────────────────
+
+    /// @notice Mints a new lottery ticket
+    /// @param ticketPrice Price in USDT to mint (wei)
+    /// @param recipient   Ticket receiver
+    /// @param useReferral Whether a referral code is used
+    /// @param refCode     Referral code (if any)
+    /// @param uri         Metadata URI
+    function mintTicket(
         uint256 ticketPrice,
-        address user,
-        bool hasReferral,
-        string memory referralCode,
-        string memory tokenURI
-    ) public {
-        string memory ticketReferral;
+        address recipient,
+        bool useReferral,
+        string memory refCode,
+        string memory uri
+    ) external {
+        _ensureState(State.Open, "Draw not open");
+        _ensure(ticketPrice >= minEntry, "Below minimum entry");
+
+        // 1) Generate unique referral code for this new ticket
+        string memory newCode = _generateUniqueReferral(recipient);
+
+        address upline;
+        uint256 uplineId = 0;
+        if (useReferral) {
+            _ensure(referralExists[refCode], "Invalid referral code");
+            _ensure(referralToOwner[refCode] != recipient, "Cannot use your own referral");
+            upline = referralToOwner[refCode];
+            uplineId = referralToTicket[refCode];
+            // Discount for referred user
+            ticketPrice = (ticketPrice * (BPS_DIVIDER - REFERRER_REWARD_BPS)) / BPS_DIVIDER;
+        }
+
+        // 2) Transfer USDT from msg.sender and mint NFT
+        usdtToken.safeTransferFrom(msg.sender, address(this), ticketPrice);
+        nextTokenId++;
+        _safeMint(recipient, nextTokenId);
+        _setTokenURI(nextTokenId, uri);
+
+        // 3) Assign initial random xiom points (100–1000)
+        uint256 xiomPts = _randomXiom(recipient);
+
+        // 4) Store ticket data
+        tickets[nextTokenId] = Ticket({
+            uri: uri,
+            id: nextTokenId,
+            holder: payable(recipient),
+            price: ticketPrice,
+            referralCode: newCode,
+            timesUsed: 0,
+            earnings: 0,
+            referrerId: useReferral ? uplineId : 0,
+            xiom: xiomPts
+        });
+
+        // 5) Register referral mappings
+        referralExists[newCode] = true;
+        referralToTicket[newCode] = nextTokenId;
+        ticketToReferral[nextTokenId] = newCode;
+        referralToOwner[newCode] = recipient;
+        ticketToOwner[nextTokenId] = recipient;
+
+        // 6) Add to allEntries for future xiom boosts
+        allEntries.push(nextTokenId);
+
+        // 7) UPDATE “top21” LEADERBOARD with this new ticket
+        _updateTopTickets(nextTokenId);
+
+        // 8) Distribute funds (fees, referrals, pool)
+        _distributeFunds(ticketPrice, useReferral, upline, uplineId);
+    }
+
+    // ───────────────────────────────────────────────
+    // 2) DISTRIBUTE USDT TO REFERRER, FEES, AND DRAW POOL
+    // ───────────────────────────────────────────────
+    function _distributeFunds(
+        uint256 amount,
+        bool useReferral,
+        address upline,
+        uint256 uplineId
+    ) internal {
+        if (useReferral) {
+            uint256 reward = (amount * REFERRAL_REWARD_BPS) / BPS_DIVIDER;
+            // 2.1) Pay referrer in USDT→Doge, add xiom to upline and ancestors
+            tickets[uplineId].earnings += reward;
+            tickets[uplineId].timesUsed++;
+            tickets[uplineId].xiom += 1500;
+            // RE-EVALUATE top21 for upline
+            _updateTopTickets(uplineId);
+
+            // Now boost ancestors by +1500 xiom each
+            uint256 ancestor = tickets[uplineId].referrerId;
+            while (ancestor != 0) {
+                tickets[ancestor].xiom += 1500;
+                _updateTopTickets(ancestor);
+                ancestor = tickets[ancestor].referrerId;
+            }
+
+            // Convert “reward USDT” → “rewardInDoge”, send to upline
+            uint256 rewardInDoge = _toDoge(reward);
+            usdtToken.safeTransfer(dogeWallet, reward);
+            dogeToken.safeTransferFrom(dogeWallet, upline, rewardInDoge);
+
+            // Subtract referral reward from amount going forward
+            amount -= reward;
+        }
+
+        // 2.2) Pay team, future project, and charity fees
+        uint256 teamAmt = (amount * TEAM_FEE_BPS) / BPS_DIVIDER;
+        uint256 futureAmt = (amount * FUTURE_FEE_BPS) / BPS_DIVIDER;
+        uint256 charityAmt = (amount * CHARITY_FEE_BPS) / BPS_DIVIDER;
+        usdtToken.safeTransfer(teamWallet, teamAmt);
+        usdtToken.safeTransfer(futureProjWallet, futureAmt);
+        usdtToken.safeTransfer(charityWallet, charityAmt);
+
+        // 2.3) Add remainder to rewardPool; if ≥ TARGET_POOL, switch to Distributing
+        uint256 poolContrib = (amount * (BPS_DIVIDER - TEAM_FEE_BPS - FUTURE_FEE_BPS - CHARITY_FEE_BPS)) / BPS_DIVIDER;
+        rewardPool += poolContrib;
+        if (rewardPool >= TARGET_POOL) {
+            currentState = State.Distributing;
+        }
+    }
+
+    // ───────────────────────────────────────────────
+    // 3) PICK & PAY OUT UP TO 21 WINNERS
+    // ───────────────────────────────────────────────
+
+    /// @notice Selects up to 21 winners when pool target is reached.
+    ///         We simply pay all ticket IDs in `topTicketIds`, mark them `hasWon`,
+    ///         then clear `topTicketIds` for the next round.
+    function pickWinners() external {
+        _ensureState(State.Distributing, "Pool target not met");
+
+        // If no one is currently in the top21 array, nothing to pay
+        uint256 count = topTicketIds.length;
+        if (count == 0) {
+            // Just reset pool & reopen
+            rewardPool = 0;
+            _boostXioms();
+            currentState = State.Open;
+            return;
+        }
+
+        // Compute “5 USDT” in token decimals
+        uint256 decimals = IERC20Metadata(address(usdtToken)).decimals();
+        uint256 prizeAmount = 5 * (10 ** decimals);
+
+        // 3.1) Pay each of the (≤21) entries in topTicketIds
+        for (uint256 i = 0; i < count; i++) {
+            uint256 tid = topTicketIds[i];
+            address payable winner = tickets[tid].holder;
+            usdtToken.safeTransfer(winner, prizeAmount);
+            // Mark permanently ineligible
+            hasWon[winner] = true;
+        }
+
+        // 3.2) Clear topTicketIds so that next draw starts fresh
+        delete topTicketIds;
+
+        // 3.3) Reset pool, boost everyone’s xiom by 5%, and reopen
+        rewardPool = 0;
+        _boostXioms();
+        currentState = State.Open;
+    }
+
+    // ───────────────────────────────────────────────
+    // 4) OVERRIDE TRANSFER TO KEEP REFERRAL MAPPINGS
+    // ───────────────────────────────────────────────
+
+    /// @notice Keep referral ownership when transferring tickets
+    function transferFrom(address from, address to, uint256 tokenId) public override(ERC721, IERC721) {
+        string memory code = tickets[tokenId].referralCode;
+        referralToOwner[code] = to;
+        tickets[tokenId].holder = payable(to);
+        super.transferFrom(from, to, tokenId);
+    }
+
+    // ───────────────────────────────────────────────
+    // 5) REFERRAL & XIOM HELPERS
+    // ───────────────────────────────────────────────
+
+    /// @dev Creates a unique 8-char referral code (“AAA-0000”)
+    function _generateUniqueReferral(address user) internal view returns (string memory) {
         for (uint256 i = 0; i < 10; i++) {
-            ticketReferral = _generateRandomReferral(user, i);
-            if (!isrefferal[ticketReferral]) {
+            string memory code = _randomReferral(user, i);
+            if (!referralExists[code]) {
+                return code;
+            }
+        }
+        revert TDError("Could not generate unique referral code");
+    }
+
+    /// @dev Pseudo-random referral code generator (AAA-0000)
+    function _randomReferral(address user, uint256 idx) internal view returns (string memory) {
+        bytes memory buf = new bytes(8);
+        uint256 seed = uint256(keccak256(abi.encodePacked(block.timestamp, user, idx)));
+        for (uint256 i = 0; i < 3; i++) {
+            buf[i] = bytes1(uint8(65 + (seed >> (i * 8)) % 26));
+        }
+        buf[3] = "-";
+        for (uint256 i = 4; i < 8; i++) {
+            buf[i] = bytes1(uint8(48 + (seed >> (i * 8)) % 10));
+        }
+        return string(buf);
+    }
+
+    /// @dev Pseudo-random xiom point generator (100–1000)
+    function _randomXiom(address user) internal view returns (uint256) {
+        uint256 seed = uint256(keccak256(abi.encodePacked(block.timestamp, user)));
+        return ((seed % 10) + 1) * 100;
+    }
+
+    /// @dev Boost xiom points of *all* previous entries by 5%
+    function _boostXioms() internal {
+        for (uint256 i = 0; i < allEntries.length; i++) {
+            uint256 tid = allEntries[i];
+            tickets[tid].xiom = (tickets[tid].xiom * 105) / 100;
+            // NOTE: Since *all* tickets get scaled by 1.05, their relative order does NOT change,
+            // so we do NOT need to call _updateTopTickets here.
+        }
+    }
+
+    /// @dev Convert an “amount” of USDT (wei) → equivalent Doge (wei), via Chainlink price feed
+    function _toDoge(uint256 amount) internal view returns (uint256) {
+        ( , int256 price, , , ) = AggregatorV3Interface(priceFeed).latestRoundData();
+        require(price > 0, "Invalid price");
+        uint256 rawPrice = uint256(price);
+        uint256 priceDecimals = AggregatorV3Interface(priceFeed).decimals(); // e.g. 8
+        uint256 usdtDecimals = IERC20Metadata(address(usdtToken)).decimals(); // e.g. 18
+        uint256 dogeDecimals = IERC20Metadata(address(dogeToken)).decimals(); // e.g. 8
+
+        // Make “amount” be at Doge-decimals before dividing by rawPrice
+        if (usdtDecimals > dogeDecimals) {
+            uint256 diff = usdtDecimals - dogeDecimals;
+            amount = amount / (10 ** diff);
+        } else {
+            uint256 diff = dogeDecimals - usdtDecimals;
+            amount = amount * (10 ** diff);
+        }
+
+        // (amount * 10^priceDecimals) / rawPrice = how many Doge (8-dec)
+        uint256 dogeAmount = (amount * (10 ** priceDecimals)) / rawPrice;
+        return dogeAmount;
+    }
+
+    // ───────────────────────────────────────────────
+    // 6) TOP-21 LEADERBOARD MANAGEMENT
+    // ───────────────────────────────────────────────
+
+    /// @notice When a ticket’s xiom changes (or when it’s first minted),
+    ///         call this to keep “topTicketIds” sorted (desc) with ≤ 21 entries.
+    function _updateTopTickets(uint256 tid) internal {
+        address holder = tickets[tid].holder;
+
+        // 1) If this holder has already won in any previous draw, remove tid if present and return
+        if (hasWon[holder]) {
+            _removeFromTop(tid);
+            return;
+        }
+
+        // 2) Remove tid if it was already in the array (so we can re-insert it)
+        _removeFromTop(tid);
+
+        // 3) If there’s still room (<21), just insert in order
+        if (topTicketIds.length < MAX_WINNERS) {
+            _insertToTop(tid);
+            return;
+        }
+
+        // 4) Otherwise, check if tid’s xiom is strictly greater than the current “smallest” (last index)
+        uint256 lastTid = topTicketIds[topTicketIds.length - 1];
+        uint256 lastXiom = tickets[lastTid].xiom;
+        uint256 xiomPts = tickets[tid].xiom;
+        if (xiomPts > lastXiom) {
+            // Evict the last (smallest) and re-insert tid
+            topTicketIds.pop();
+            _insertToTop(tid);
+            return;
+        }
+        // If xiomPts ≤ lastXiom, it doesn’t belong in top21, so do nothing
+    }
+
+    /// @dev Helper: remove `tid` from `topTicketIds[]` if it’s there. Returns true if removed.
+    function _removeFromTop(uint256 tid) internal returns (bool) {
+        uint256 len = topTicketIds.length;
+        for (uint256 i = 0; i < len; i++) {
+            if (topTicketIds[i] == tid) {
+                // Shift everything down from i+1 … len-1
+                for (uint256 j = i; j + 1 < len; j++) {
+                    topTicketIds[j] = topTicketIds[j + 1];
+                }
+                topTicketIds.pop();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// @dev Helper: insert `tid` into `topTicketIds[]` in descending-`xiom` order.
+    ///      After this, we guarantee length ≤ MAX_WINNERS (21) by popping if needed.
+    function _insertToTop(uint256 tid) internal {
+        uint256 xiomPts = tickets[tid].xiom;
+        uint256 len = topTicketIds.length;
+
+        // 1) Find insertion index (first i where existing xiom < xiomPts)
+        uint256 idx = len; // default: append at end
+        for (uint256 i = 0; i < len; i++) {
+            uint256 curTid = topTicketIds[i];
+            if (tickets[curTid].xiom < xiomPts) {
+                idx = i;
                 break;
             }
         }
 
-        _require(state == State.Started, "Target Pool Balance Is Reached, Wait For Selecting Winner");
-
-        _require(ticketPrice >= MINIMUM_ENTRANCE, "Insufficient Amount To Send");
-
-        _require(ticketPrice < MAXIMUM_ENTRANCE, "Too Much Amount To Send");
-
-        if (hasReferral) {
-            _require(isrefferal[referralCode], "Referral Does Not Exist");
-            _require(referralToOwner[referralCode] != user, "Can not Use Your Own Referral");
-            ticketPrice = (ticketPrice * (DIVIDER - REFERRER_REWARD)) / DIVIDER;
+        // 2) Push dummy to expand array by 1
+        topTicketIds.push(tid);
+        // 3) Shift elements right from idx…end
+        for (uint256 j = topTicketIds.length - 1; j > idx; j--) {
+            topTicketIds[j] = topTicketIds[j - 1];
         }
+        // 4) Place tid at position idx
+        topTicketIds[idx] = tid;
 
-        _require(USDT.transferFrom(msg.sender, address(this), ticketPrice), "USDT Transfer Failed");
-
-        _tokenId++;
-
-        _safeMint(user, _tokenId);
-        _setTokenURI(_tokenId, tokenURI);
-
-        address upline;
-        uint256 uplineId;
-        uint256 xiom = _generateRandomXiom(user);
-        if (hasReferral) {
-            upline = referralToOwner[referralCode];
-            uplineId = referralToTokenId[referralCode];
-            idToListedToken[uplineId].totalreferralUsed++;
-            idToListedToken[uplineId].xiom += 1500;
-            uint256 ancestor = idToListedToken[uplineId].uplineId;
-            while (ancestor != 0) {
-                idToListedToken[ancestor].xiom += 1500;
-                ancestor = idToListedToken[ancestor].uplineId;
-            }
-
-            idToListedToken[_tokenId] = ListedToken({
-                tokenURI: tokenURI,
-                tokenId: _tokenId,
-                drawId: drawId,
-                owner: payable(user),
-                price: ticketPrice,
-                referral: ticketReferral,
-                totalreferralUsed: 0,
-                totalReferralEarned: 0,
-                uplineId: uplineId,
-                xiom: xiom
-            });
-        } else {
-            idToListedToken[_tokenId] = ListedToken({
-                tokenURI: tokenURI,
-                tokenId: _tokenId,
-                drawId: drawId,
-                owner: payable(user),
-                price: ticketPrice,
-                referral: ticketReferral,
-                totalreferralUsed: 0,
-                totalReferralEarned: 0,
-                uplineId: 0,
-                xiom: xiom
-            });
-        }
-
-        referralToTokenId[ticketReferral] = _tokenId;
-        tokenIdToReferral[_tokenId] = ticketReferral;
-        tokenIdToOwner[_tokenId] = user;
-        referralToOwner[ticketReferral] = user;
-        isrefferal[ticketReferral] = true;
-
-        newPlayers.push(_tokenId);
-        oldPlayers.push(_tokenId);
-
-        _distributeAmount(ticketPrice, hasReferral, upline, uplineId);
-    }
-
-    function _distributeAmount(uint256 amount, bool hasReferral, address upline, uint256 uplineId) internal {
-        if (hasReferral) {
-            uint256 uplineReward = (amount * (REFERRAL_REWARD)) / DIVIDER;
-            amount -= uplineReward;
-            idToListedToken[uplineId].totalReferralEarned += uplineReward;
-            _require(USDT.transfer(upline, uplineReward), "USDT Transfer Failed");
-        }
-
-        uint256 teamBenefitAmount = (amount * (TEAM_BENEFIT_FEE)) / DIVIDER;
-        _require(USDT.transfer(TEAM_BENEFIT_WALLET, teamBenefitAmount), "USDT Transfer Failed");
-
-        uint256 futureProjectAmount = (amount * (FUTURE_PROJECT_FEE)) / DIVIDER;
-        _require(USDT.transfer(FUTURE_PROJECT_WALLET, futureProjectAmount), "USDT Transfer Failed");
-
-        uint256 charityAmount = (amount * (CHARITY_FEE)) / DIVIDER;
-        _require(USDT.transfer(CHARITY_WALLET, charityAmount), "USDT Transfer Failed");
-
-        drawPool += (amount * (DIVIDER - TEAM_BENEFIT_FEE - FUTURE_PROJECT_FEE - CHARITY_FEE)) / DIVIDER;
-
-        if (drawPool >= TARGET_DRAW_BALANCE) {
-            state = State.SelectingWinners;
+        // 5) If we now exceed MAX_WINNERS, pop the last element
+        if (topTicketIds.length > MAX_WINNERS) {
+            topTicketIds.pop();
         }
     }
 
-    function _require(bool condition, string memory message) internal pure {
-        if (!condition) {
-            revert TicketDoge__Error(message);
+    // ───────────────────────────────────────────────
+    // 7) ENSURE HELPERS & VIEW FUNCTIONS
+    // ───────────────────────────────────────────────
+
+    /// @dev Ensures the contract is in expected state
+    function _ensureState(State expected, string memory msgError) internal view {
+        if (currentState != expected) revert TDError(msgError);
+    }
+
+    /// @dev Reverts with error string
+    function _ensure(bool condition, string memory msgError) internal pure {
+        if (!condition) revert TDError(msgError);
+    }
+
+    /// @notice Returns ticket data
+    function getTicket(uint256 tid) external view returns (Ticket memory) {
+        return tickets[tid];
+    }
+
+    /// @notice Returns all tickets owned by a given user
+    function userTickets(address user) external view returns (Ticket[] memory) {
+        uint256 total = nextTokenId;
+        uint256 count = 0;
+        for (uint256 i = 1; i <= total; i++) {
+            if (ownerOf(i) == user) count++;
         }
-    }
-
-    function selectingWinners() public {
-        _require(state == State.SelectingWinners, "Target Pool Balance Is Not Reached");
-        uint256 newPlayersSize = newPlayers.length;
-        uint256 oldPlayerSize = oldPlayers.length;
-
-        uint256 newPlayersWinnerIndex = _randNum(newPlayersSize, 0);
-        uint256 oldPlayersWinnerIndex = _randNum(oldPlayerSize, 1);
-
-        uint256 newPlayersWinnerTokenId = newPlayers[newPlayersWinnerIndex];
-        address newPlayersWinner = tokenIdToOwner[newPlayersWinnerTokenId];
-        uint256 newPlayersWinnerPrize = (idToListedToken[newPlayersWinnerTokenId].price * PRIZE_COEFFICIANT) / 1000;
-
-        uint256 oldPlayersWinnerTokenId = oldPlayers[oldPlayersWinnerIndex];
-        address oldPlayersWinner = tokenIdToOwner[oldPlayersWinnerTokenId];
-        uint256 oldPlayersWinnerPrize = (idToListedToken[oldPlayersWinnerTokenId].price * PRIZE_COEFFICIANT) / 1000;
-
-        _require(USDT.transfer(newPlayersWinner, newPlayersWinnerPrize), "USDT Transfer Failed");
-
-        _require(USDT.transfer(oldPlayersWinner, oldPlayersWinnerPrize), "USDT Transfer Failed");
-
-        newPlayersWinners.push(newPlayersWinner);
-        oldPlayersWinners.push(oldPlayersWinner);
-        newPlayersWinnersPrizes.push(newPlayersWinnerPrize);
-        oldPlayersWinnersPrizes.push(oldPlayersWinnerPrize);
-
-        _increaseXioms();
-
-        delete newPlayers;
-        drawPool -= (newPlayersWinnerPrize + oldPlayersWinnerPrize);
-        drawId++;
-
-        state = State.Started;
-    }
-
-    function transferFrom(address from, address to, uint256 tokenId) public virtual override(ERC721, IERC721) {
-        string memory referral = idToListedToken[tokenId].referral;
-        referralToOwner[referral] = to;
-        idToListedToken[tokenId].owner = payable(to);
-        super.transferFrom(from, to, tokenId);
-    }
-
-    function _randNum(uint256 size, uint256 index) internal view returns (uint256) {
-        return uint256(keccak256(abi.encodePacked(block.timestamp, blockhash(block.number - 1), index))) % size;
-    }
-
-    function _generateRandomReferral(address user, uint256 index) internal view returns (string memory) {
-        bytes memory result = new bytes(8);
-
-        uint256 randomSeed = uint256(keccak256(abi.encodePacked(block.timestamp, user, index)));
-
-        for (uint256 i = 0; i < 3; i++) {
-            uint256 rand = uint256(keccak256(abi.encodePacked(randomSeed, i)));
-            result[i] = bytes1(uint8(65 + (rand % 26)));
-        }
-
-        result[3] = bytes1(uint8(45));
-
-        for (uint256 i = 4; i < 8; i++) {
-            uint256 rand = uint256(keccak256(abi.encodePacked(randomSeed, i)));
-            result[i] = bytes1(uint8(48 + (rand % 10)));
-        }
-
-        return string(result);
-    }
-
-    function _generateRandomXiom(address user) internal view returns (uint256) {
-        uint256 randomSeed = uint256(keccak256(abi.encodePacked(block.timestamp, user)));
-        return (1 + randomSeed % 10) * 100;
-    }
-
-    function _increaseXioms() internal {
-        uint256[] memory _oldPlayars = oldPlayers;
-        for (uint256 i = 0; i < _oldPlayars.length; i++) {
-            uint256 newXiom = idToListedToken[i].xiom * 105 / 100;
-            idToListedToken[i].xiom = newXiom;
-        }
-    }
-
-    function getToken(uint256 tokenId) public view returns (ListedToken memory) {
-        return idToListedToken[tokenId];
-    }
-
-    function getMyNFTs() public view returns (ListedToken[] memory) {
-        uint256 totalItemCount = _tokenId;
-        uint256 itemCount = 0;
-        uint256 currentIndex = 0;
-
-        for (uint256 i = 0; i < totalItemCount; i++) {
-            if (ownerOf(i + 1) == msg.sender) {
-                itemCount += 1;
+        Ticket[] memory result = new Ticket[](count);
+        uint256 idx = 0;
+        for (uint256 i = 1; i <= total; i++) {
+            if (ownerOf(i) == user) {
+                result[idx++] = tickets[i];
             }
         }
-
-        ListedToken[] memory items = new ListedToken[](itemCount);
-        for (uint256 i = 0; i < totalItemCount; i++) {
-            if (ownerOf(i + 1) == msg.sender) {
-                uint256 currentId = i + 1;
-                ListedToken storage currentItem = idToListedToken[currentId];
-                items[currentIndex] = currentItem;
-                currentIndex += 1;
-            }
-        }
-
-        return items;
+        return result;
     }
 
-    function getLatestNewPlayersWinner() public view returns (address) {
-        return newPlayersWinners[drawId - 2];
-    }
-
-    function getLatestOldPlayersWinner() public view returns (address) {
-        return oldPlayersWinners[drawId - 2];
-    }
-
-    function getLatestNewPlayersPrize() public view returns (uint256) {
-        return newPlayersWinnersPrizes[drawId - 2];
-    }
-
-    function getLatestOldPlayersPrize() public view returns (uint256) {
-        return oldPlayersWinnersPrizes[drawId - 2];
-    }
-
-    function getXiom(uint256 tokenId) external view returns (uint256) {
-        return idToListedToken[tokenId].xiom;
+    /// @notice Get xiom points for a ticket
+    function xiomOf(uint256 tid) external view returns (uint256) {
+        return tickets[tid].xiom;
     }
 }

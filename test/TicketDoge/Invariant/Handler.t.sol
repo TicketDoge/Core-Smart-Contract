@@ -41,7 +41,7 @@ contract Handler is Test {
     }
 
     function mintTicket(address user, uint256 amount) public {
-        if (ticket.currentState() == TicketDoge.State.Drawing) {
+        if (ticket.currentState() == TicketDoge.State.Distributing) {
             ticket.pickWinners();
         }
 

@@ -2,13 +2,13 @@
 pragma solidity 0.8.22;
 
 import {Test} from "forge-std/Test.sol";
-import {MKFS} from "../../src/ICO/MKFS.sol";
-import {ICO} from "../../src/ICO/ICO.sol";
+import {Aquatimus} from "../../src/ICO/MKFS.sol";
+import {AquatimusICO} from "../../src/ICO/ICO.sol";
 import {USDT} from "../mocks/USDT.sol";
 
 contract ICOTest is Test {
-    MKFS mkfs;
-    ICO ico;
+    Aquatimus mkfs;
+    AquatimusICO ico;
     USDT usdt;
 
     address owner = address(100);
@@ -18,10 +18,10 @@ contract ICOTest is Test {
     address user4 = address(1);
 
     function setUp() public {
-        mkfs = new MKFS(owner);
+        mkfs = new Aquatimus(owner, address(10000));
         vm.startPrank(owner);
         usdt = new USDT();
-        ico = new ICO(address(mkfs), address(usdt));
+        ico = new AquatimusICO(owner, address(mkfs), address(usdt));
         mkfs.transfer(address(ico), 3_000_000_000_000e18);
         vm.stopPrank();
     }
